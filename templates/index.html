@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Flask Highcharts Live Data Demo</title>
+
+    <!-- Boot Strap css Links -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+
+    <!-- Bootstraps Java Scipts Links -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+
+    <!-- JQuery links  -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+
+    <!--Added -->
+    <link rel="stylesheet" type="text/css" href="https://code.highcharts.com/css/stocktools/gui.css">
+    <link rel="stylesheet" type="text/css" href="https://code.highcharts.com/css/annotations/popup.css">
+
+    <script src="https://code.highcharts.com/stock/highstock.js"></script>
+    <script src="https://code.highcharts.com/stock/modules/data.js"></script>
+
+    <script src="https://code.highcharts.com/stock/indicators/indicators-all.js"></script>
+
+    <script src="https://code.highcharts.com/stock/modules/drag-panes.js"></script>
+    <script src="https://code.highcharts.com/stock/modules/annotations-advanced.js"></script>
+    <script src="https://code.highcharts.com/stock/modules/price-indicator.js"></script>
+    <script src="https://code.highcharts.com/stock/modules/full-screen.js"></script>
+
+    <script src="https://code.highcharts.com/stock/modules/stock-tools.js"></script>
+
+    <style>
+        .range-wrap {
+            position: relative;
+            margin: 0 auto 3rem;
+        }
+
+        .range {
+          width: 100%;
+        }
+
+        .bubble {
+          background: royalblue;
+          color: white;
+          padding: 4px 12px;
+          position: absolute;
+          border-radius: 4px;
+          left: 50%;
+          transform: translateX(-50%);
+            margin-top: 20px;
+        }
+
+        .bubble::after {
+          content: "";
+          position: absolute;
+          width: 2px;
+          height: 2px;
+          background: royalblue;
+          top: -1px;
+          left: 50%;
+        }
+
+        .options {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .drain {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+        }
+    </style>
+
+</head>
+    <body>
+        <div class="jumbotron">
+            <div id="container" class="chart"></div>
+        </div>
+        <div class="options">
+            <div class="range-wrap">
+                <label for="temp_slider">Temperatura zadana [C]</label>
+                <input type="range" min="15" max="70" value="30" class="range" id="temp_slider">
+                <output class="bubble"></output>
+            </div>
+
+            <div class="range-wrap">
+                <label for="v_slider">Pojemność zbiornika [l]</label>
+                <input type="range" min="10" max="80" value="50" class="range" id="v_slider">
+                <output class="bubble"></output>
+            </div>
+        </div>
+
+        <script>
+
+            const allRanges = document.querySelectorAll(".range-wrap");
+            allRanges.forEach(wrap => {
+              const range = wrap.querySelector(".range");
+              const bubble = wrap.querySelector(".bubble");
+
+              range.addEventListener("input", () => {
+                setBubble(range, bubble);
+              });
+              setBubble(range, bubble);
+            });
+
+            function setBubble(range, bubble) {
+              const val = range.value;
+              const min = range.min ? range.min : 0;
+              const max = range.max ? range.max : 100;
+              const newVal = Number(((val - min) * 100) / (max - min));
+              bubble.innerHTML = val;
+
+              // Sorta magic numbers based on size of the native UI thumb
+              bubble.style.left = `calc(${newVal}% + (${8 - newVal * 0.15}px))`;
+            }
+
+            var temp_slider = document.getElementById("temp_slider");
+            let Tmp_set = Number(temp_slider.value);
+
+            var v_slider = document.getElementById("v_slider");
+            let V = v_slider.value * Math.pow(10, -3);
+
+            temp_slider.oninput = function() {
+              Tmp_set = this.value;
+              loadData();
+              plotCharts();
+            }
+
+            v_slider.oninput = function() {
+                V = this.value * Math.pow(10, -3);
+                loadData();
+                plotCharts();
+            }
+
+            const P = 1500; // moc grzałki [W]
+            const ro = 997; // gestosc wody [kg/ m3]
+            const n = 0.95; // sprawnosc boilera
+            const Tmp_in = 15; // temperatura wody wplywajacej [C]
+            let Tmp_curr = Tmp_in; // obecna temperatura wody [C]
+            const cw = 4189.9; // pojemnosc cieplna wody [J/kg*C]
+
+            const U = 230;
+            const max_I = P / U;
+
+            const Tmp_env = 20; // temperatura otoczenia
+            const k = 0.000005; // stała proporcjonalności
+
+            // PARAMETRY WYKRESU CZASOWEGO
+            let tmp = [0];
+            const t_sim = 7200;
+            const Tp = 1;
+            const N = Math.floor(t_sim / Tp);
+
+            // PARAMETRY REGULATORA PID
+            const kp = 2.5;
+            const Ti = 15000;
+            const Td = 1;
+            let sum_e = 0;
+            let e = [Tmp_set - Tmp_curr];
+
+            let zadana = [];
+            let max_Y;
+
+            function loadData() {
+                zadana = [];
+                tmp = [0];
+                Tmp_curr = Tmp_in;
+
+                // Main loop
+                for (let t = 0; t < N - 1; t++) {
+                    let temp = [];
+                    // regulator PID
+                    e.push(Tmp_set - Tmp_curr);
+                    sum_e += e[t];
+                    let reg = kp * (e[e.length - 1] + Tp * sum_e / Ti + Td * (e[e.length - 1] - e[e.length - 2]) / Tp);
+
+                    if (reg < 0) {
+                        reg = 0;
+                    }
+                    if (reg > max_I) {
+                        reg = max_I;
+                    }
+
+                    // przyrost temperatury wody w 1s - spadek temperatury przez straty ciepła
+                    Tmp_curr += (n * Tp * U * reg) / (V * ro * cw) - k * (Tmp_curr - Tmp_env);
+
+                    temp.push(t);
+                    temp.push(Tmp_curr);
+                    tmp.push(temp);
+                    zadana.push(Number(Tmp_set));
+                }
+                max_Y = (Tmp_set < 55) ?  45 : 80;
+            }
+            function plotCharts(){
+                Highcharts.chart('container', {
+                    navigation: {
+                        bindings: {
+                            rect: {
+                                annotationsOptions: {
+                                    shapeOptions: {
+                                        fill: 'rgba(255, 0, 0, 0.8)'
+                                    }
+                                }
+                            }
+                        },
+                        annotationsOptions: {
+                            typeOptions: {
+                                line: {
+                                    stroke: 'rgba(255, 0, 0, 1)',
+                                    strokeWidth: 5
+                                }
+                            }
+                        }
+                    },
+                    yAxis: [{
+                        labels: {
+                            align: 'left'
+                        },
+                        height: '80%',
+                        max: max_Y,
+                        title: {
+                            margin: 30,
+                            text: "temperatura [C]"
+                        }
+                    }],
+
+                    xAxis: [{
+                        title: {
+                            text: "czas [m]"
+                        }
+                    }],
+
+                    series: [{
+                        type: 'line',
+                        id: 'tmp_curr',
+                        name: 'Temperatura wody w zbiorniku',
+                        data: tmp
+                    }, {
+                        type: 'line',
+                        id: 'tmp_set',
+                        name: 'Temperatura zadana',
+                        data: zadana
+                    }],
+
+                    title: {
+                        text: 'Temperatura w zbiorniku'
+                    }
+
+                });
+            }
+
+            $( document ).ready(function()
+            {
+                $.getJSON('/pipe', function(data){
+                    loadData(P, Tmp_set);
+                    plotCharts();
+                });
+            });
+
+        </script>
+
+    </body>
+</html>
